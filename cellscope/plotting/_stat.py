@@ -1,56 +1,32 @@
+"""Compatibility cell-ratio plot with an explicit within-sample denominator."""
+
+from pathlib import Path
+
 import matplotlib.pyplot as plt
-import numpy as np
-from typing import Tuple, Union, Optional
 import pandas as pd
-import scanpy as sc
 
-def cell_ratio(
-    adata, 
-    x:str, 
-    y:str,
-    *,
-    palette = None,
-    normalize = True,
-    od=None,
-    legend=True,
-    figsize=(6, 3)
-    ):
 
-    df = adata.obs.loc[:,[x,y]]
-    x_items = sorted(df[x].unique().tolist())
-    y_items = sorted(df[y].unique().tolist())
-
-    if palette is None:
-        palette = dict(zip(y_items, adata.uns[f'{y}_colors']))
-
-    heights = []
-    for x_item in x_items:
-        tmp_result = []
-        x_item_counter = df[df[x]==x_item][y].value_counts().to_dict()
-        for y_item in y_items:
-            tmp_result.append(x_item_counter.get(y_item, 0))
-        heights.append(tmp_result)
-    heights = np.asarray(heights)
-
+def cell_ratio(adata, x, y, *, palette=None, normalize=True, od=None, legend=True, figsize=(6, 3)):
+    table = pd.crosstab(adata.obs[x], adata.obs[y], dropna=False)
     if normalize:
-        heights = heights/np.sum(heights, axis=0)
-    heights = (heights.T/np.sum(heights, axis=1)).T
-
-    plt.figure(figsize=figsize)
-    _last = np.matrix([0.]* heights.shape[0])
-    for i, y_item in enumerate(y_items):
-        p = plt.bar(range(0, heights.shape[0]), heights[:, i],
-                    bottom=np.asarray(_last)[0],
-                    color=palette.get(y_item, 'b'),
-                    label=y_item
-                    )
-        _last = _last + np.matrix(heights[:, i])
-    plt.xticks(range(0, len(x_items)),labels=x_items,rotation=90)
-    plt.ylim((0, 1))
+        table = table.div(table.sum(axis=1), axis=0)
+    if palette is None and f"{y}_colors" in adata.uns:
+        categories = (
+            adata.obs[y].cat.categories
+            if isinstance(adata.obs[y].dtype, pd.CategoricalDtype)
+            else table.columns
+        )
+        palette = dict(zip(categories, adata.uns[f"{y}_colors"]))
+    _, ax = plt.subplots(figsize=figsize)
+    colors = [palette.get(item, "gray") for item in table.columns] if palette else None
+    table.plot.bar(stacked=True, ax=ax, color=colors, legend=legend)
+    ax.set_ylabel("Fraction" if normalize else "Cell count")
+    if normalize:
+        ax.set_ylim(0, 1)
     if legend:
-        plt.legend()
-        ax = plt.gca()
-        ax.legend(bbox_to_anchor=(1.05, 1),loc='upper left', borderaxespad=0.)
+        ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left", borderaxespad=0)
     if od is not None:
-        plt.savefig(od + f'/{x}_{y}_cell_ratio.pdf', dpi=300,bbox_inches="tight")
-    return pd.DataFrame(heights,columns=y_items,index=x_items)
+        destination = Path(od)
+        destination.mkdir(parents=True, exist_ok=True)
+        ax.figure.savefig(destination / f"{x}_{y}_cell_ratio.pdf", dpi=300, bbox_inches="tight")
+    return table

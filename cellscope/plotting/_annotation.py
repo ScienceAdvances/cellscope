@@ -1,66 +1,72 @@
-import matplotlib.pyplot as plt
-import numpy as np
-from typing import Tuple, Union, Optional,Sequence
+"""Legacy annotation plots using native Scanpy/decoupler interfaces."""
+
+from pathlib import Path
+
 import pandas as pd
 import scanpy as sc
-import atopos
-import pathlib
-import functools
+
+from .._legacy_save import save_images
+from ..tools._api import aucell
 from ._emmbeding import dimplot
 
+
 def plot_marker(
-    adata: sc.AnnData, 
-    annotation: Union[pathlib.PosixPath, str],
-    outdir:Union[pathlib.PosixPath,str] = pathlib.Path().absolute(),
-    cell_type_key: str = 'CellType',
-    marker_key:str = 'Marker',
-    formats:tuple = ('pdf','png'),
-    palette:str='Reds'
-    ):
-    atopos.tl.mkdir(outdir)
-    _saveimg = atopos.tl._saveimg(formats=formats,outdir=outdir,dpi=300)
+    adata,
+    annotation,
+    outdir=".",
+    cell_type_key="CellType",
+    marker_key="Marker",
+    formats=("pdf", "png"),
+    palette="Reds",
+):
+    table = pd.read_csv(annotation, sep="\t") if isinstance(annotation, (str, Path)) else annotation
+    markers = {row[cell_type_key]: str(row[marker_key]).split(",") for _, row in table.iterrows()}
+    save = save_images(outdir=outdir, formats=formats)
+    plots = {}
+    for name in ("dotplot", "stacked_violin", "matrixplot", "heatmap"):
+        plots[name] = getattr(sc.pl, name)(
+            adata, var_names=markers, groupby=cell_type_key, show=False, cmap=palette
+        )
+        save(f"Marker_{name}")
+    for name, genes in markers.items():
+        dimplot(adata, reduction="umap", outdir=outdir, filename=f"Marker_{name}", color=genes)
+    return plots
 
-    _annot_df = pd.read_csv(annotation,sep='\t', dtype='object')
 
-    marker_dict = {}
-    for index,row in _annot_df.iterrows():
-        marker_dict[row[cell_type_key]] = row[marker_key].split(',')
-
-    sc.pl.dotplot(adata,var_names=marker_dict,groupby=cell_type_key,show=False,cmap=palette)
-    _saveimg('MakerDotPlot')
-    sc.pl.stacked_violin(adata,var_names=marker_dict,groupby=cell_type_key,show=False,cmap=palette)
-    _saveimg('MakerStackedViolin')
-    sc.pl.matrixplot(adata,var_names=marker_dict,groupby=cell_type_key,show=False,cmap=palette)
-    _saveimg('MakerMatrixplot')
-    sc.pl.heatmap(adata,var_names=marker_dict,groupby=cell_type_key,show=False,cmap=palette)
-    _saveimg('MakerHeatmap')
-    for k,v in marker_dict:
-        dimplot(adata,reduction='X_umap',outdir=outdir,filename=f'MakerDimPlot_{k}',color=v)
-
-def auc_heatmap(adata,marker,out_prefix,ref_key="Cluster",figsize=(12,6),use_raw=True):
-    import decoupler
-    net=marker.melt(var_name="source",value_name="target").dropna()
-    decoupler.run_aucell(adata,net,source="source",target="target",min_n=1,seed=1314,use_raw=use_raw)
-    dt2=adata.obsm["aucell_estimate"].groupby(by=adata.obs.loc[:,ref_key]).agg(np.mean)
-    import seaborn
-    seaborn.clustermap(dt2.T,method='complete',z_score=0,cmap="viridis",figsize=figsize);
-    plt.savefig(f"{out_prefix}.pdf",bbox_inches='tight')
-    dt2.index.name="CellType"
-    dt2.to_csv(f"{out_prefix}_score.csv.gz")
-
-def score_heatmap(adata,marker_df,reference_key="Cluster",figsize=(9,6),return_score=False,save_fig=False):
-    obs = adata.obs
-    markers_dict = {x:np.intersect1d(marker_df.loc[:,x].dropna(),adata.raw.var_names) for x in  marker_df.columns}
-    for x in markers_dict.keys():
-        sc.tl.score_genes(adata,gene_list=markers_dict[x],score_name=f"{x}_Marker_Score")
-    dt = atopostl.select(adata.obs,columns=[reference_key],pattern="_Marker_Score$")
-    adata.obs = obs
-    a=dt.groupby(by=reference_key).apply(np.mean,axis=0)
-    a.columns = atoposst.removes(string=a.columns,pattern=r"_Marker_Score$")
+def auc_heatmap(adata, marker, out_prefix, ref_key="Cluster", figsize=(12, 6), use_raw=True):
     import seaborn as sns
-    sns.clustermap(a.T,method='complete',standard_scale=0,cmap="viridis",figsize=figsize);
+
+    network = marker.melt(var_name="source", value_name="target").dropna()
+    scores = aucell(adata, network=network, use_raw=use_raw)
+    means = scores.groupby(adata.obs[ref_key], observed=True).mean()
+    plot = sns.clustermap(means.T, method="complete", z_score=0, cmap="viridis", figsize=figsize)
+    destination = Path(out_prefix)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    plot.savefig(f"{out_prefix}.pdf")
+    means.to_csv(f"{out_prefix}_score.csv.gz")
+    return means
+
+
+def score_heatmap(
+    adata, marker_df, reference_key="Cluster", figsize=(9, 6), return_score=False, save_fig=False
+):
+    import seaborn as sns
+
+    working = adata.copy()
+    names = []
+    for label in marker_df:
+        name = f"{label}_Marker_Score"
+        sc.tl.score_genes(working, gene_list=marker_df[label].dropna().tolist(), score_name=name)
+        names.append(name)
+    scores = working.obs[[reference_key, *names]].copy()
     if return_score:
-        return dt
+        return scores
+    means = scores.groupby(reference_key, observed=True)[names].mean()
+    plot = sns.clustermap(
+        means.T, method="complete", standard_scale=0, cmap="viridis", figsize=figsize
+    )
     if save_fig:
-        plt.savefig(f"{save_fig}/anno_heatmap.pdf",bbox_inches='tight')
-    a.to_csv("score.csv.gz")
+        destination = Path(save_fig)
+        destination.mkdir(parents=True, exist_ok=True)
+        plot.savefig(destination / "annotation_heatmap.pdf")
+    return plot

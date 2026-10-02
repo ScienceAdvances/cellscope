@@ -1,16 +1,18 @@
 [project]
 name = "cellscope"
-version = "1.1.1"
+version = "1.2.0"
 description = "single cell multi-omics data analysis toolkit"
 authors = [{ name = "生信探索 BioQuest", email = "yehior@qq.com" }]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies=[
-"numpy>1.19.5",
-"scanpy>1.10",
-"pydeseq2>0.5",
-"pandas>2",
-"numpy>1.23"
+"numpy>=1.24",
+"pandas>=2",
+"scipy>=1.11",
+"anndata>=0.10",
+"mudata>=0.3",
+"scanpy>=1.10",
+"matplotlib>=3.8"
 ]
 
 classifiers = [
@@ -21,11 +23,25 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
+[project.optional-dependencies]
+integration = ["scvi-tools>=1.2"]
+functional = ["decoupler>=2.0"]
+differential = ["pydeseq2>=0.5", "decoupler>=2.0", "patsy>=1.0"]
+limma = ["pylimma>=0.2.0", "edgepython>=0.2.6", "decoupler>=2.0", "patsy>=1.0"]
+edger = ["edgepython>=0.2.6", "decoupler>=2.0", "patsy>=1.0"]
+de = ["pydeseq2>=0.5", "pylimma>=0.2.0", "edgepython>=0.2.6", "decoupler>=2.0", "patsy>=1.0"]
+clustering = ["igraph>=0.11", "leidenalg>=0.10"]
+dev = ["pytest>=8", "ruff>=0.6", "build>=1"]
+
 [project.urls]
 Homepage = "https://github.com/ScienceAdvances/cellscope"
 
-[tool.setuptools]
+[tool.hatch.build.targets.wheel]
 packages = ["cellscope"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
 
 
 [build-system]

@@ -8,3 +8,10 @@ cellscope/st/__pycache__
 cellscope/tl/__pycache__
 .DS_Store
 cellscope/.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+build/

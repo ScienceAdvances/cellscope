@@ -1,31 +1,38 @@
-import pathlib
-import scanpy as sc
-import anndata
-from typing import Optional, Union
 from importlib import resources
+from typing import ClassVar
+
+import anndata
+
 from .. import _data
 
 
-def subset(
-    adata: anndata.AnnData, subsets: dict, inplace: bool = False
-) -> Optional[anndata.AnnData]:
+def subset(adata: anndata.AnnData, subsets: dict, inplace: bool = False) -> anndata.AnnData | None:
     """
     filter/subset a AnnData according to subsets conditions
     """
-    _a = adata if inplace else adata.copy()
-    for k in subsets:
-        v = subsets.get(k)
-        if isinstance(v, list):
-            _lg = _a.obs[k].isin(v)
-            _a = _a[_lg, :]
+    import numpy as np
+
+    keep = np.ones(adata.n_obs, dtype=bool)
+    for key, condition in subsets.items():
+        series = adata.obs[key]
+        if callable(condition):
+            mask = condition(series)
+        elif isinstance(condition, (list, tuple, set)):
+            mask = series.isin(condition)
+        elif isinstance(condition, str) and "x" in condition:
+            # Preserve trusted, vectorized legacy predicates such as 'x > 3'.
+            mask = series.to_frame("x").eval(condition)
         else:
-            _lg = _a.obs[k].apply(lambda x: eval(v))
-            _a = _a[_lg, :]
-    return None if inplace else _a
+            mask = series.eq(condition)
+        keep &= np.asarray(mask, dtype=bool)
+    if inplace:
+        adata._inplace_subset_obs(keep)
+        return None
+    return adata[keep].copy()
 
 
 class Chrom_size:
-    hg38 = {
+    hg38: ClassVar[dict] = {
         "chr1": 248956422,
         "chr2": 242193529,
         "chr3": 198295559,
@@ -51,7 +58,7 @@ class Chrom_size:
         "chrX": 156040895,
         "chrY": 57227415,
     }
-    mm10 = {
+    mm10: ClassVar[dict] = {
         "chr1": 195471971,
         "chr2": 182113224,
         "chr3": 160039680,
@@ -76,10 +83,8 @@ class Chrom_size:
     }
 
 
-def read_json(
-    filename: str,
-    encoding="utf-8"
-):
+def read_json(filename: str, encoding="utf-8"):
     import json
+
     with resources.open_text(_data, filename, encoding=encoding) as _:
         return json.load(_)
