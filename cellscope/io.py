@@ -10,6 +10,18 @@ import mudata as md
 import pandas as pd
 
 from ._core import modality, record
+from ._seurat import read_seurat_rds
+
+__all__ = [
+    "concat",
+    "create_mudata",
+    "read_10x",
+    "read_h5ad",
+    "read_h5mu",
+    "read_seurat_rds",
+    "set_cell_ids",
+    "write",
+]
 
 
 def set_cell_ids(adata, *, library_id, sample_id=None, donor_id=None, barcode_key="barcode"):

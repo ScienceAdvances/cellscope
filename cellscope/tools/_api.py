@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from .._core import counts, dependency, modality, record, sync_obs
@@ -13,7 +14,19 @@ def pca(data, *, mod="gex", n_comps=50, **kwargs):
 
     adata = modality(data, mod)
     mask = kwargs.get("mask_var")
-    n_vars = int(adata.var[mask].sum()) if isinstance(mask, str) else adata.n_vars
+    if "mask_var" not in kwargs and not kwargs.get("obsm"):
+        use_hvg = kwargs.get("use_highly_variable")
+        if use_hvg or (use_hvg is None and "highly_variable" in adata.var):
+            mask = "highly_variable"
+    if isinstance(mask, str):
+        mask = adata.var[mask].to_numpy()
+    if mask is not None:
+        mask = np.asarray(mask)
+        if mask.shape != (adata.n_vars,) or mask.dtype.kind != "b":
+            raise ValueError("mask_var must be a boolean mask with one value per gene")
+    n_vars = int(mask.sum()) if mask is not None else adata.n_vars
+    if kwargs.get("obsm"):
+        n_vars = adata.obsm[kwargs["obsm"]].shape[1]
     n_comps = min(n_comps, adata.n_obs - 1, n_vars - 1)
     if n_comps < 1:
         raise ValueError("PCA requires at least two cells and two selected genes")

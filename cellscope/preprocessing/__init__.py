@@ -9,8 +9,18 @@ from ._api import (
     normalize,
     qc,
 )
+from ._best_practices import (
+    deviance_features,
+    pearson_hvg,
+    pearson_residuals,
+    scdblfinder,
+    scran,
+    sctransform,
+    soupx,
+)
 
 __all__ = [
+    "deviance_features",
     "doublets",
     "fastqc",
     "filter_cells",
@@ -21,7 +31,13 @@ __all__ = [
     "neighbors",
     "normalise",
     "normalize",
+    "pearson_hvg",
+    "pearson_residuals",
     "qc",
+    "scdblfinder",
+    "scran",
+    "sctransform",
+    "soupx",
 ]
 
 

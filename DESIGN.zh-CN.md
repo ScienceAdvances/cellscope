@@ -16,7 +16,7 @@ cellscope 负责：
 - pseudobulk 聚合、样本层面的差异表达。
 - 细胞组成统计、探索性比较和绘图。
 
-immune 负责受体链、克隆型、免疫组库统计、纵向克隆追踪、克隆与细胞状态的关系，以及 bulk 与单细胞的匹配。cellscope 不依赖 immune；immune 只在可选的克隆相关表达分析中依赖 cellscope，避免循环依赖。
+immune owns receptor chains, clonotypes, repertoire statistics, longitudinal clone tracking, clone/state associations, and bulk-to-cell matching. Neither package depends on the other. Applications call cellscope directly for expression analysis and immune for receptor analysis, sharing annotations through aligned cell identifiers.
 
 未来的 ATAC、空间组学等包可以采用相同的数据约定，但对应算法不属于当前版本。共享容器不意味着不同模态都适用 RNA 归一化，也不意味着空间 spot 与单细胞天然共享同一观察轴。
 

@@ -17,17 +17,41 @@ from ._api import (
     umap,
     workflow,
 )
+from ._best_practices import (
+    bbknn,
+    celltypist,
+    communication,
+    grn,
+    harmony,
+    milo,
+    mixscape,
+    palantir,
+    perturbation_distance,
+    regulon_activity,
+    sccoda,
+    scenic_regulons,
+    tsne,
+    velocity,
+)
 from ._differential import de_methods, find_all_markers, find_markers, pseudobulk_de
+from ._r_methods import (
+    glmpca,
+    nichenet,
+    slingshot,
+    tradeseq,
+)
 from .compositional_analysis import cell_composition, composition_test
-from .utils import Chrom_size, read_json, subset
+from .utils import read_json, subset
 
 __all__ = [
-    "Chrom_size",
     "activity",
     "add_label",
     "annotate",
     "aucell",
+    "bbknn",
     "cell_composition",
+    "celltypist",
+    "communication",
     "composition_test",
     "de_methods",
     "deseq",
@@ -35,19 +59,34 @@ __all__ = [
     "find_all_markers",
     "find_markers",
     "get_rank_array",
+    "glmpca",
+    "grn",
+    "harmony",
     "leiden",
     "markers",
+    "milo",
+    "mixscape",
+    "nichenet",
+    "palantir",
     "pca",
+    "perturbation_distance",
     "pseudobulk",
     "pseudobulk_de",
     "read_json",
     "reference_mapping",
+    "regulon_activity",
     "scanvi",
+    "sccoda",
+    "scenic_regulons",
     "score_genes",
     "scvi",
+    "slingshot",
     "subset",
+    "tradeseq",
     "trajectory",
+    "tsne",
     "umap",
+    "velocity",
     "workflow",
 ]
 

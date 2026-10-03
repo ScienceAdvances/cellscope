@@ -12,8 +12,9 @@ functional scoring, pseudobulk inference, and cell composition.
 
 immune owns immune receptor chains, clonotypes, repertoire statistics,
 longitudinal clone tracking, clone/state relationships, and bulk-to-cell
-matching. cellscope has no dependency on immune. immune only requires
-cellscope for its optional clone-aware expression workflows.
+matching. Neither package depends on the other. Applications call cellscope
+directly for expression analysis and immune for receptor analysis, using aligned
+cell identifiers to share annotations.
 
 Future ATAC and spatial packages can adopt this data contract. Their analysis
 algorithms are outside this release. A common container does not imply that
