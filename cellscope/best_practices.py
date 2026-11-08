@@ -10,7 +10,11 @@ import pandas as pd
 _METHODS = (
     ("RNA preprocessing", "pp.qc", "scanpy", "", ""),
     ("RNA preprocessing", "pp.doublets", "scanpy/Scrublet", "", ""),
-    ("RNA preprocessing", "pp.soupx", "pysoupx", "ambient", "SoupX (optional)"),
+    ("RNA preprocessing", "pp.soupx", "soupx", "ambient", ""),
+    ("RNA preprocessing", "pp.cellbender", "cellbender/Python", "cellbender", ""),
+    ("RNA preprocessing", "pp.scDblFinder", "scDblFinderPy", "doublets-python", ""),
+    ("RNA preprocessing", "pp.filter_qc", "scanpy/scipy", "", ""),
+    ("RNA preprocessing", "pp.scdblfinder_py", "scDblFinderPy", "doublets-python", ""),
     ("RNA preprocessing", "pp.scdblfinder", "R/scDblFinder", "r", "scDblFinder"),
     ("Normalization", "pp.normalize", "scanpy", "", ""),
     ("Normalization", "pp.pearson_residuals", "scanpy", "", ""),

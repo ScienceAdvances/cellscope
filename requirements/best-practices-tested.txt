@@ -11,7 +11,7 @@ pertpy==1.4.0
 jax==0.11.2
 jaxlib==0.11.2
 numpyro==0.22.0
-pysoupx==0.1.0
+soupx-python==0.4.0
 sctransform==0.2.0
 glmpca==0.1.0
 nichenetpy==1.0.2

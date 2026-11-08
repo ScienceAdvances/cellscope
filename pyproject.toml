@@ -9,6 +9,7 @@ dependencies=[
 "numpy>=1.24",
 "pandas>=2",
 "scipy>=1.11",
+"h5py>=3.8",
 "anndata>=0.10",
 "mudata>=0.3",
 "scanpy>=1.10",
@@ -24,8 +25,11 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+genevector = ["genevector==0.1.0", "torch>=2.0", "numba>=0.57", "fast-histogram"]
 r = []
-ambient = ["pysoupx>=0.1.0"]
+ambient = ["soupx-python>=0.4.0,<0.5"]
+cellbender = ["cellbender==0.4.0"]
+doublets-python = ["scDblFinderPy @ git+https://github.com/ETHZ-INS/scDblFinderPy.git@9f09ca0c4b491b517902130c7d42fb96427f970e ; python_version >= '3.12'"]
 normalization = ["sctransform>=0.2.0"]
 annotation = ["celltypist>=1.7"]
 batch = ["harmonypy>=0.0.10", "bbknn>=1.6"]
@@ -36,7 +40,7 @@ composition = ["pertpy[jax]>=1.4", "scanpy>=1.12"]
 perturbation = ["pertpy>=1.4", "scanpy>=1.12"]
 communication = ["liana>=1.5", "nichenetpy>=1.0.2"]
 grn = ["arboreto>=0.1.6", "pyscenic>=0.12", "setuptools<81"]
-best-practices = ["pysoupx>=0.1.0", "sctransform>=0.2.0", "celltypist>=1.7",
+best-practices = ["soupx-python>=0.4.0,<0.5", "sctransform>=0.2.0", "celltypist>=1.7",
                   "harmonypy>=0.0.10", "bbknn>=1.6", "scvelo>=0.3", "palantir>=1.4",
                   "pertpy[jax]>=1.4", "scanpy>=1.12", "liana>=1.5", "nichenetpy>=1.0.2"]
 integration = ["scvi-tools>=1.2"]
@@ -53,6 +57,9 @@ Homepage = "https://github.com/ScienceAdvances/cellscope"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cellscope"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build]
 exclude = ["**/__pycache__/**", "**/*.pyc"]

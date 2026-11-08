@@ -8,6 +8,6 @@ install.packages(c("Matrix", "jsonlite"))
 BiocManager::install(c("SingleCellExperiment", "scran", "scry", "scDblFinder",
                        "slingshot", "tradeSeq", "DelayedMatrixStats"), ask=FALSE, update=FALSE)
 if ("--extended" %in% args) {
-    install.packages(c("SoupX", "sctransform", "glmpca", "remotes"))
+    install.packages(c("sctransform", "glmpca", "remotes"))
     remotes::install_github("saeyslab/nichenetr", upgrade="never")
 }

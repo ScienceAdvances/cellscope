@@ -1,12 +1,13 @@
 """Compatibility cell-ratio plot with an explicit within-sample denominator."""
 
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from ._output import finish_plot
 
-def cell_ratio(adata, x, y, *, palette=None, normalize=True, od=None, legend=True, figsize=(6, 3)):
+
+def cell_ratio(adata, x, y, *, palette=None, normalize=True, legend=True, figsize=(6, 3), filename=None, outdir=".", formats=("pdf", "png"), dpi=300, show=False):
+    """Return plot Axes; the computed composition is in ax.cellscope_table."""
     table = pd.crosstab(adata.obs[x], adata.obs[y], dropna=False)
     if normalize:
         table = table.div(table.sum(axis=1), axis=0)
@@ -25,8 +26,5 @@ def cell_ratio(adata, x, y, *, palette=None, normalize=True, od=None, legend=Tru
         ax.set_ylim(0, 1)
     if legend:
         ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left", borderaxespad=0)
-    if od is not None:
-        destination = Path(od)
-        destination.mkdir(parents=True, exist_ok=True)
-        ax.figure.savefig(destination / f"{x}_{y}_cell_ratio.pdf", dpi=300, bbox_inches="tight")
-    return table
+    ax.cellscope_table = table
+    return finish_plot(ax, filename=filename, outdir=outdir, formats=formats, dpi=dpi, show=show)

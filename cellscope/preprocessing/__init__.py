@@ -1,5 +1,6 @@
 """Preprocessing namespace; legacy entry points remain available."""
 
+from ._adata_preprocessing import cellbender, filter_qc, scDblFinder
 from ._api import (
     doublets,
     filter_cells,
@@ -18,12 +19,16 @@ from ._best_practices import (
     sctransform,
     soupx,
 )
+from ._python_qc import cellbender_file, scdblfinder_py
 
 __all__ = [
+    "cellbender",
+    "cellbender_file",
     "deviance_features",
     "doublets",
     "fastqc",
     "filter_cells",
+    "filter_qc",
     "flag_gene_family",
     "highly_variable_genes",
     "mad_filter",
@@ -34,7 +39,9 @@ __all__ = [
     "pearson_hvg",
     "pearson_residuals",
     "qc",
+    "scDblFinder",
     "scdblfinder",
+    "scdblfinder_py",
     "scran",
     "sctransform",
     "soupx",
@@ -43,11 +50,13 @@ __all__ = [
 
 def __getattr__(name):
     if name == "normalise":
+        from .._logging import instrument_function
         from ._normalization import normalise
 
-        return normalise
+        return instrument_function(normalise, "pp.normalise")
     if name in {"flag_gene_family", "fastqc", "mad_filter"}:
+        from .._logging import instrument_function
         from . import _qc
 
-        return getattr(_qc, name)
+        return instrument_function(getattr(_qc, name), f"pp.{name}")
     raise AttributeError(name)

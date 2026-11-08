@@ -5,13 +5,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from .. import _logging as feedback
 from .._core import counts, dependency, modality, record, sync_obs
+from .._device import execution_backend, requested_device, run_scanpy, select_gpu
 from ._differential import differential_expression  # noqa: F401
 
 
-def pca(data, *, mod="gex", n_comps=50, **kwargs):
-    import scanpy as sc
-
+def pca(data, *, mod="gex", n_comps=50, device=None, **kwargs):
     adata = modality(data, mod)
     mask = kwargs.get("mask_var")
     if "mask_var" not in kwargs and not kwargs.get("obsm"):
@@ -30,21 +30,34 @@ def pca(data, *, mod="gex", n_comps=50, **kwargs):
     n_comps = min(n_comps, adata.n_obs - 1, n_vars - 1)
     if n_comps < 1:
         raise ValueError("PCA requires at least two cells and two selected genes")
-    sc.pp.pca(adata, n_comps=n_comps, **kwargs)
+    feedback.progress(f"PCA | {adata.n_obs:,} cells | {n_vars:,} selected features | {n_comps} components")
+    run_scanpy(adata, "pp", "pca", device=device, n_comps=n_comps, **kwargs)
     return data
 
 
-def umap(data, *, mod="gex", **kwargs):
-    import scanpy as sc
-
-    sc.tl.umap(modality(data, mod), **kwargs)
+def umap(data, *, mod="gex", device=None, **kwargs):
+    run_scanpy(modality(data, mod), "tl", "umap", device=device, **kwargs)
     return data
 
 
-def leiden(data, *, mod="gex", resolution=1.0, key_added="leiden", **kwargs):
-    import scanpy as sc
-
-    sc.tl.leiden(modality(data, mod), resolution=resolution, key_added=key_added, **kwargs)
+def leiden(data, *, mod="gex", resolution=1.0, key_added="leiden", device=None,
+           flavor="auto", **kwargs):
+    """Cluster with automatic dispatch, explicit cuGraph GPU, or native CPU flavors."""
+    if flavor not in {"auto", "cugraph", "igraph", "leidenalg"}:
+        raise ValueError("flavor must be auto/cugraph/igraph/leidenalg")
+    if flavor == "cugraph":
+        if device not in {None, "gpu", "auto"}:
+            raise ValueError("flavor='cugraph' requires device='gpu' or 'auto'")
+        device = "gpu"  # An explicit cuGraph request cannot silently use a CPU algorithm.
+    elif flavor != "auto":
+        if requested_device(device) == "gpu":
+            raise RuntimeError(f"flavor={flavor!r} selects CPU; use flavor='auto' or 'cugraph' for GPU")
+        kwargs["flavor"] = flavor
+    run_scanpy(modality(data, mod), "tl", "leiden", device=device,
+               resolution=resolution, key_added=key_added, **kwargs)
+    adata = modality(data, mod)
+    if key_added in adata.obs:
+        feedback.info(f"Leiden | {adata.obs[key_added].nunique():,} clusters | saved obs['{key_added}']")
     sync_obs(data, mod)
     return data
 
@@ -60,28 +73,32 @@ def workflow(
     resolution=1.0,
     batch_key=None,
     random_state=0,
+    device=None,
 ):
     """Run normalization, HVG, PCA, neighbors, UMAP, and Leiden on one modality."""
     from .. import pp
 
-    pp.normalize(data, mod=mod, layer=layer)
-    pp.highly_variable_genes(data, mod=mod, n_top_genes=n_top_genes, batch_key=batch_key)
-    pca(data, mod=mod, n_comps=n_pcs, mask_var="highly_variable", random_state=random_state)
+    pp.normalize(data, mod=mod, layer=layer, device=device)
+    pp.highly_variable_genes(data, mod=mod, n_top_genes=n_top_genes, batch_key=batch_key, device=device)
+    pca(data, mod=mod, n_comps=n_pcs, mask_var="highly_variable", random_state=random_state, device=device)
     adata = modality(data, mod)
     pp.neighbors(
         data,
         mod=mod,
+        device=device,
         n_neighbors=min(n_neighbors, adata.n_obs - 1),
         n_pcs=adata.obsm["X_pca"].shape[1],
         random_state=random_state,
     )
-    umap(data, mod=mod, random_state=random_state)
+    umap(data, mod=mod, random_state=random_state, device=device)
+    gpu_clustering = select_gpu("workflow.Leiden", device=device)
     leiden(
         data,
         mod=mod,
         resolution=resolution,
-        flavor="igraph",
-        n_iterations=2,
+        device="gpu" if gpu_clustering else "cpu",
+        **({} if gpu_clustering else {"flavor": "igraph", "directed": False}),
+        n_iterations=100 if gpu_clustering else 2,
         random_state=random_state,
     )
     record(
@@ -98,14 +115,16 @@ def workflow(
     return data
 
 
-def markers(data, *, groupby, mod="gex", key_added="rank_genes_groups", **kwargs):
+def markers(data, *, groupby, mod="gex", key_added="rank_genes_groups", device=None, **kwargs):
     import scanpy as sc
 
     adata = modality(data, mod)
     kwargs.setdefault("use_raw", False)
     kwargs.setdefault("method", "wilcoxon")
-    sc.tl.rank_genes_groups(adata, groupby=groupby, key_added=key_added, **kwargs)
-    record(adata, key_added, {"groupby": groupby, **kwargs}, backend="scanpy")
+    run_scanpy(adata, "tl", "rank_genes_groups", device=device,
+               groupby=groupby, key_added=key_added, **kwargs)
+    record(adata, key_added, {"groupby": groupby, **kwargs},
+           backend=execution_backend(adata, "tl", "rank_genes_groups"))
     return sc.get.rank_genes_groups_df(adata, group=None, key=key_added)
 
 
@@ -117,13 +136,13 @@ def annotate(data, mapping, *, reference_key="leiden", key_added="cell_type", mo
     return data
 
 
-def score_genes(data, gene_sets, *, mod="gex", **kwargs):
-    import scanpy as sc
-
+def score_genes(data, gene_sets, *, mod="gex", device=None, **kwargs):
     adata = modality(data, mod)
     kwargs.setdefault("use_raw", False)
     for name, genes in gene_sets.items():
-        sc.tl.score_genes(adata, gene_list=list(genes), score_name=name, **kwargs)
+        feedback.progress(f"Gene scoring | {name}")
+        run_scanpy(adata, "tl", "score_genes", device=device,
+                   gene_list=list(genes), score_name=name, **kwargs)
     sync_obs(data, mod)
     return data
 

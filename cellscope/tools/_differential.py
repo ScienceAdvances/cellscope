@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
+from .. import _logging as feedback
 from .._core import counts, dependency, modality, record
 
 _CELL_METHODS = {
@@ -307,7 +308,8 @@ def find_all_markers(
     if len(groups) < 2:
         raise ValueError("FindAllMarkers requires at least two observed identities")
     tables = []
-    for group in groups:
+    for number, group in enumerate(groups, 1):
+        feedback.progress(f"FindAllMarkers [{number}/{len(groups)}] | {group} vs rest")
         tables.append(
             find_markers(
                 data,

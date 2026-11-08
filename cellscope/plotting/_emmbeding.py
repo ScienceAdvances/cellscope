@@ -5,13 +5,13 @@ from collections.abc import Sequence
 import matplotlib.pyplot as plt
 import scanpy as sc
 
-from .._legacy_save import save_images
+from ._output import finish_plot, reject_save
 
 
 def dimplot(
     adata: sc.AnnData,
     reduction: str,
-    filename: str,
+    filename: str | None = None,
     dim1label: str = "UMAP1",
     dim2label: str = "UMAP2",
     color: str | list[str] | tuple[str] | Sequence[str] = "CellType",
@@ -21,41 +21,63 @@ def dimplot(
     width=7,
     height=6,
     dpi: int = 300,
+    axis_length: float = 0.12,
+    axis_origin: tuple[float, float] = (0.06, 0.06),
+    show: bool = False,
     **kwds,
 ):
-    _saveimg = save_images(formats=formats, outdir=outdir, dpi=dpi)
-    plt.rcParams["figure.figsize"] = (width, height)
-    ax = sc.pl.embedding(adata, basis=reduction, color=color, show=False, frameon=frameon, **kwds)
-    axes = ax if isinstance(ax, list) else [ax]
-    for x in axes:
-        x.arrow(
-            -7,
-            -12,
-            5 * height / width,
-            0,
-            head_width=0.5,
-            head_length=0.5,
-            width=0.1,
-            color="black",
+    """Plot/save an embedding with optional small lower-left axes.
+
+    With frameon=False (default), axis_origin and axis_length use fractions
+    of each panel, independent of embedding coordinates. Larger axis_length
+    gives longer arrows. frameon=True keeps the normal coordinate axes.
+    Returns the native Matplotlib axis or list of axes.
+    """
+    origin_x, origin_y = axis_origin
+    if not 0 < axis_length < 1 or not (
+        0 <= origin_x < 1 - axis_length and 0 <= origin_y < 1 - axis_length
+    ):
+        raise ValueError("axis_origin and axis_length must keep the arrows inside each panel")
+    reject_save(kwds)
+    kwds["show"] = False
+    kwds["save"] = False
+    return_figure = kwds.pop("return_fig", False)
+    with plt.rc_context({"figure.figsize": (width, height)}):
+        ax = sc.pl.embedding(
+            adata, basis=reduction, color=color, frameon=frameon, **kwds,
         )
-        x.arrow(
-            -7,
-            -12,
-            0,
-            5,
-            head_width=0.5,
-            head_length=0.5,
-            width=0.1 * height / width,
-            color="black",
-        )
-        x.text(-6.5, -13.5, dim1label, fontdict={"weight": "bold", "color": "black"})
-        x.text(
-            -8,
-            -11.3,
-            dim2label,
-            fontdict={"fontweight": "bold", "rotation": "vertical"},
-        )
-    _saveimg(filename=filename, figsize=(width, height))
+        axes = ax if isinstance(ax, list) else [ax]
+        if not frameon:
+            for panel in axes:
+                # Axes-relative coordinates never expand the UMAP data limits.
+                origin = (origin_x, origin_y)
+                style = {"arrowstyle": "->", "color": "black", "lw": 0.8,
+                         "shrinkA": 0, "shrinkB": 0, "mutation_scale": 8}
+                panel.annotate(
+                    "", xy=(origin_x + axis_length, origin_y), xytext=origin,
+                    xycoords="axes fraction", textcoords="axes fraction", arrowprops=style,
+                )
+                panel.annotate(
+                    "", xy=(origin_x, origin_y + axis_length), xytext=origin,
+                    xycoords="axes fraction", textcoords="axes fraction", arrowprops=style,
+                )
+                panel.annotate(
+                    dim1label, xy=(origin_x + axis_length / 2, origin_y),
+                    xycoords="axes fraction", xytext=(0, -5), textcoords="offset points",
+                    ha="center", va="top", fontsize=8,
+                )
+                panel.annotate(
+                    dim2label, xy=(origin_x, origin_y + axis_length / 2),
+                    xycoords="axes fraction", xytext=(-5, 0), textcoords="offset points",
+                    ha="right", va="center", rotation=90, fontsize=8,
+                )
+                panel.set_axis_off()
+        # Multi-panel figures retain Scanpy's panel layout rather than being
+        # squeezed into a single width x height canvas.
+        if len(axes) == 1:
+            ax.figure.set_size_inches(width, height)
+    result = axes[0].figure if return_figure else ax
+    return finish_plot(result, filename=filename, outdir=outdir, formats=formats, dpi=dpi, show=show)
 
 
 def plot_batch_effect(
@@ -75,8 +97,10 @@ def plot_batch_effect(
     n_neighbors: int = 15,
     dpi: int = 300,
     formats: tuple[str] = ("pdf", "png"),
-) -> sc.AnnData | None:
-    _saveimg = save_images(formats=formats, outdir=outdir, dpi=dpi)
+    filename=None,
+    show=False,
+):
+    plots = {}
     if use_rep not in adata.obsm:
         if use_rep != "X_pca":
             raise KeyError(f"Embedding {use_rep!r} must be computed before plotting")
@@ -88,8 +112,9 @@ def plot_batch_effect(
             n_comps=n_comps,
             mask_var=mask_var if mask_var in adata.var else None,
         )
-        sc.pl.pca_variance_ratio(adata, n_pcs=n_comps, show=False)
-        _saveimg("PCA_variance_ratio")
+        from ._pca import pca_variance_ratio
+
+        plots["pca_variance"] = pca_variance_ratio(adata, n_pcs=n_comps)
     if neighbors_key not in adata.uns:
         sc.pp.neighbors(
             adata,
@@ -120,19 +145,25 @@ def plot_batch_effect(
         adata=adata,
         legend_fontsize=legend_fontsize,
         outdir=outdir,
-        legend_loc=legend_loc,
+        legend_loc=legend_loc, formats=formats, dpi=dpi,
     )
-    _dimplot(
+    plots["batch"] = _dimplot(
         reduction=f"{neighbors_key}_umap",
         color=batch_key,
-        filename=f"{batch_key}_UMAP",
+        filename=None,
     )
-    _dimplot(
+    plots["cluster"] = _dimplot(
         reduction=f"{neighbors_key}_umap",
         color=cluster_key,
-        filename=f"{cluster_key}_UMAP",
+        filename=None,
     )
     # _dimplot(reduction='tsne',color=batch_key,filename=f"{batch_key}_TSNE",dim1label='TSNE1',dim2label='TSNE2')
     # _dimplot(reduction='tsne',color=cluster_key,filename=f"{cluster_key}_TSNE",dim1label='TSNE1',dim2label='TSNE2')
     # batch_key='Sample';legend_loc='right margin';reduction='umap';outdir=f"{OUTDIR}/batch_effect_before_integratation"
     # legend_fontsize='small';cluster_key='Cluster_before_integratation'
+
+    for name, plot in plots.items():
+        finish_plot(plot, filename=f"{filename}_{name}" if filename is not None else None, outdir=outdir, formats=formats, dpi=dpi)
+    if show:
+        plt.show()
+    return plots

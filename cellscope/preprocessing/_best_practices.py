@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from importlib.metadata import version
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from anndata import AnnData
 from scipy import sparse
 
+from .. import _logging as feedback
 from .. import r
 from .._core import counts, dependency, modality, record, sync_obs
+from ._adata_preprocessing import _groups
 
 
 def _labels(adata, key):
@@ -129,6 +135,140 @@ def scran(
 
 
 def soupx(
+    data, raw=None, *, batch_key=None, raw_files=None, cluster_key=None,
+    mod="gex", layer="auto", raw_layer=None, backend="python", contamination=None,
+    key_added="soupx_counts", random_state=0, estimate_kwargs=None, adjust_kwargs=None,
+    backup_layer="raw_counts", counts_layer="counts",
+):
+    """Remove ambient RNA with NiRuff's soupx-python.
+
+    For a merged object, pass batch_key and raw_files (capture-library labels
+    mapped to unfiltered 10x files). Counts default to X. Temporary clusters
+    are computed separately per library unless cluster_key is supplied.
+    After all libraries succeed, the input counts are copied to backup_layer
+    and corrected counts replace X and counts_layer. Cells and genes keep
+    their order. contamination can be a scalar or a per-library mapping.
+
+    The single-library form soupx(data, raw, cluster_key=...) defaults to the
+    counts layer and writes only key_added, preserving X.
+    """
+    options = dict(
+        mod=mod, backend=backend, key_added=key_added, random_state=random_state,
+        estimate_kwargs=estimate_kwargs, adjust_kwargs=adjust_kwargs,
+    )
+    if batch_key is None and raw_files is None:
+        if raw is None or cluster_key is None:
+            raise ValueError("Supply raw and cluster_key for single-library SoupX")
+        return _soupx_library(
+            data, raw, cluster_key=cluster_key, layer="counts" if layer == "auto" else layer,
+            raw_layer=raw_layer, contamination=contamination, **options,
+        )
+    if raw is not None or raw_layer is not None or batch_key is None or not isinstance(raw_files, Mapping):
+        raise ValueError("For merged SoupX, supply batch_key and a raw_files mapping of unfiltered 10x inputs")
+    return _soupx_batches(
+        data, raw_files, batch_key=batch_key, cluster_key=cluster_key,
+        layer=None if layer == "auto" else layer, contamination=contamination,
+        backup_layer=backup_layer, counts_layer=counts_layer, **options,
+    )
+
+
+def _soupx_clusters(matrix, random_state):
+    import scanpy as sc
+
+    working = AnnData(matrix.copy())
+    if working.n_obs < 3 or working.n_vars < 2:
+        raise ValueError("Automatic SoupX clustering needs at least three cells and two genes; supply cluster_key")
+    sc.pp.normalize_total(working, target_sum=1e4)
+    sc.pp.log1p(working)
+    sc.pp.highly_variable_genes(working, n_top_genes=min(2000, working.n_vars))
+    n_pcs = min(30, working.n_obs - 1, int(working.var["highly_variable"].sum()) - 1)
+    if n_pcs < 1:
+        raise ValueError("Too few variable genes for SoupX clustering; supply cluster_key")
+    sc.pp.pca(working, n_comps=n_pcs, mask_var="highly_variable", random_state=random_state)
+    sc.pp.neighbors(
+        working, n_neighbors=min(15, working.n_obs - 1), use_rep="X_pca",
+        transformer="sklearn", random_state=random_state,
+    )
+    sc.tl.leiden(
+        working, flavor="igraph", directed=False, n_iterations=2, random_state=random_state,
+    )
+    return working.obs["leiden"].to_numpy()
+
+
+def _soupx_batches(
+    data, raw_files, *, batch_key, cluster_key, layer, contamination,
+    backup_layer, counts_layer, **options,
+):
+    from .. import io
+
+    mod = options["mod"]
+    adata = modality(data, mod)
+    groups = _groups(adata, batch_key)
+    matrix = counts(adata, layer)
+    if backup_layer in adata.layers or backup_layer == counts_layer:
+        raise ValueError("SoupX backup layer already exists or conflicts with counts_layer")
+    paths = {str(batch): Path(path) for batch, path in raw_files.items()}
+    if len(paths) != len(raw_files):
+        raise ValueError("raw_files library labels must be unique after conversion to strings")
+    missing = [batch for batch in groups if batch not in paths or not paths[batch].exists()]
+    if missing:
+        raise ValueError(f"Missing unfiltered 10x input for SoupX libraries: {missing}")
+    gene_ids = adata.var.get("gene_ids", adata.var.get("gene_id"))
+    if gene_ids is None or gene_ids.isna().any() or not gene_ids.astype(str).is_unique:
+        raise ValueError("Merged SoupX requires unique, nonmissing gene_ids or gene_id")
+
+    blocks, order = [], []
+    rho = np.empty(adata.n_obs)
+    contamination_by_sample = {}
+    labels = _labels(adata, cluster_key) if cluster_key is not None else None
+    for index, (batch, positions) in enumerate(groups.items(), 1):
+        with feedback.batch("SoupX", batch, index, len(groups), cells=len(positions)):
+            library = AnnData(matrix[positions].copy(), obs=adata.obs.iloc[positions].copy())
+            barcodes = library.obs.get("barcode", library.obs_names)
+            barcodes = pd.Index(barcodes, dtype="string")
+            if barcodes.isna().any() or not barcodes.is_unique or (barcodes == "").any():
+                raise ValueError(f"{batch}: SoupX requires unique, nonempty barcodes within a library")
+            library.obs_names = barcodes.astype(str)
+            library.var_names = pd.Index(gene_ids.astype(str))
+            library.obs["_soupx_cluster"] = (
+                _soupx_clusters(library.X, options["random_state"]) if labels is None else labels[positions]
+            )
+
+            raw = io.read_10x(paths[batch], library_id="soupx")
+            raw.obs_names = pd.Index(raw.obs["barcode"].astype(str))
+            raw_ids = raw.var.get("gene_ids", raw.var.get("gene_id"))
+            if raw_ids is None or raw_ids.isna().any() or not raw_ids.astype(str).is_unique:
+                raise ValueError(f"{batch}: unfiltered SoupX input requires unique, nonmissing gene IDs")
+            raw.var_names = pd.Index(raw_ids.astype(str))
+            fraction = contamination.get(batch) if isinstance(contamination, Mapping) else contamination
+            _soupx_library(
+                library, raw, cluster_key="_soupx_cluster", layer=None, contamination=fraction, **options,
+            )
+            blocks.append(library.layers[options["key_added"]])
+            order.extend(positions)
+            rho[positions] = library.obs["soupx_contamination"].to_numpy()
+            contamination_by_sample[batch] = float(rho[positions[0]])
+            feedback.info(f"SoupX | {batch} | estimated ambient fraction {contamination_by_sample[batch]:.1%}")
+            del raw, library
+
+    corrected = sparse.vstack(blocks, format="csr")[np.argsort(order)]
+    adata.layers[backup_layer] = matrix.copy()
+    adata.X = corrected
+    if counts_layer is not None:
+        adata.layers[counts_layer] = corrected.copy()
+    adata.obs["soupx_contamination"] = rho
+    adata.uns["ambient_correction"] = {
+        "method": "SoupX",
+        "backend": "soupx-python",
+        "version": version("soupx-python"),
+        "batch_key": batch_key,
+        "contamination_by_sample": contamination_by_sample,
+    }
+    sync_obs(data, mod)
+    return data
+
+
+def _soupx_library(
     data,
     raw,
     *,
@@ -143,17 +283,18 @@ def soupx(
     estimate_kwargs=None,
     adjust_kwargs=None,
 ):
-    """Correct one library with SoupX, using pysoupx by default or R SoupX explicitly.
+    """Correct one library with NiRuff's soupx-python (imported as soupx).
 
-    raw contains unfiltered droplets. Features are aligned by name; raw must
-    contain every filtered cell and gene. Call separately for each library.
+    Supply unfiltered droplets and provisional cluster labels. Features are
+    aligned by name; raw must contain every filtered cell and gene. Corrected
+    counts go into a layer. Call separately for each capture library.
     """
-    if backend not in {"python", "r"}:
-        raise ValueError("backend must be 'python' or 'r'")
+    if backend != "python":
+        raise ValueError("SoupX uses soupx-python; remove backend='r' from this call")
     adata = modality(data, mod)
     raw = modality(raw, mod)
     matrix = counts(adata, layer)
-    counts(raw, raw_layer)
+    raw_matrix = counts(raw, raw_layer)
     if (
         not adata.var_names.isin(raw.var_names).all()
         or not adata.obs_names.isin(raw.obs_names).all()
@@ -162,67 +303,38 @@ def soupx(
     if contamination is not None and not 0 <= contamination <= 1:
         raise ValueError("contamination must be between zero and one")
     groups = _labels(adata, cluster_key)
-    raw_matrix = counts(raw, raw_layer)[:, raw.var_names.get_indexer(adata.var_names)]
+    raw_matrix = raw_matrix[:, raw.var_names.get_indexer(adata.var_names)]
     estimate_kwargs, adjust_kwargs = dict(estimate_kwargs or {}), dict(adjust_kwargs or {})
     if "sc" in estimate_kwargs or "sc" in adjust_kwargs:
         raise ValueError("SoupX options cannot override the input channel 'sc'")
-    if backend == "python":
-        soup = dependency("pysoupx", "ambient")
-        working = AnnData(matrix.copy(), obs=adata.obs.copy(), var=adata.var.copy())
-        droplets = AnnData(raw_matrix.copy(), obs=raw.obs.copy(), var=adata.var.copy())
-        channel = soup.SoupChannel.from_anndata(working, raw=droplets, cluster_key=cluster_key)
-        if contamination is None:
-            channel = soup.auto_est_cont(channel, **estimate_kwargs)
-        else:
-            channel = soup.set_contamination_fraction(channel, contamination)
-        corrected = soup.adjust_counts(
-            channel, **{"round_to_int": True, "seed": random_state, **adjust_kwargs}
-        ).T
-        rho = np.asarray(channel.meta_data["rho"], dtype=float)
-        record(
-            adata,
-            key_added,
-            {"layer": layer, "cluster_key": cluster_key, "random_state": random_state},
-            backend="pysoupx",
-        )
+    if "round_to_int" in adjust_kwargs:
+        if "roundToInt" in adjust_kwargs:
+            raise ValueError("Specify only one of roundToInt and round_to_int")
+        adjust_kwargs["roundToInt"] = adjust_kwargs.pop("round_to_int")
+    soup = dependency("soupx", "ambient")
+    channel = soup.SoupChannel(
+        sparse.csr_matrix(raw_matrix.T),
+        sparse.csr_matrix(matrix.T),
+        gene_names=adata.var_names.tolist(),
+    )
+    if not channel.soupProfile["counts"].sum():
+        raise ValueError("SoupX found no background droplets in its default 0 < UMI < 100 range")
+    channel.setClusters(groups)
+    if contamination is None:
+        soup.autoEstCont(channel, **{"verbose": False, **estimate_kwargs})
     else:
-        result = r._call(
-            """function(x, raw, genes, cells, droplets, clusters, rho,
-                                     seed, estimate_options, adjust_options) {
-            set.seed(seed)
-            dimnames(x) <- list(genes, cells); dimnames(raw) <- list(genes, droplets)
-            channel <- SoupX::SoupChannel(raw, x, calcSoupProfile=TRUE)
-            channel <- SoupX::setClusters(channel, setNames(clusters, cells))
-            if (is.null(rho)) channel <- do.call(SoupX::autoEstCont,
-                c(list(sc=channel), utils::modifyList(list(doPlot=FALSE), estimate_options,
-                                                     keep.null=TRUE)))
-            else channel <- SoupX::setContaminationFraction(channel, rho)
-            out <- do.call(SoupX::adjustCounts,
-                c(list(sc=channel), utils::modifyList(list(roundToInt=TRUE), adjust_options,
-                                                     keep.null=TRUE)))
-            list(counts=out, rho=channel$metaData$rho)
-        }""",
-            packages=["SoupX"],
-            x=matrix.T,
-            raw=raw_matrix.T,
-            genes=adata.var_names,
-            cells=adata.obs_names,
-            droplets=raw.obs_names,
-            clusters=groups,
-            rho=contamination,
-            seed=random_state,
-            estimate_options=estimate_kwargs,
-            adjust_options=adjust_kwargs,
-        )
-        corrected, rho = result["counts"].T, np.asarray(result["rho"]).ravel()
-        r.record_r(
-            adata,
-            key_added,
-            {"layer": layer, "cluster_key": cluster_key, "random_state": random_state},
-            ["SoupX"],
-        )
+        channel.set_contamination_fraction(contamination)
+    corrected = soup.adjustCounts(
+        channel, **{"roundToInt": True, "seed": random_state, "verbose": 0, **adjust_kwargs}
+    ).T
+    rho = np.asarray(channel.metaData["rho"], dtype=float)
     _output(adata, corrected, key_added)
     adata.obs["soupx_contamination"] = rho
+    record(
+        adata, key_added,
+        {"layer": layer, "cluster_key": cluster_key, "random_state": random_state},
+        backend="soupx-python",
+    )
     sync_obs(data, mod)
     return data
 
@@ -303,8 +415,22 @@ def deviance_features(
     return data
 
 
-def scdblfinder(data, *, mod="gex", layer="counts", batch_key=None, random_state=0, **kwargs):
-    """Run R scDblFinder by capture batch; retain every cell and the raw counts."""
+def scdblfinder(
+    data, *, mod="gex", layer="counts", batch_key=None, random_state=0, backend="r", **kwargs
+):
+    """Detect doublets per capture; legacy R default or explicit Python backend.
+
+    ``backend='python'`` calls scDblFinderPy directly in process. Neither branch
+    filters cells or overwrites count/expression matrices.
+    """
+    if backend == "python":
+        from ._python_qc import scdblfinder_py
+
+        return scdblfinder_py(
+            data, mod=mod, layer=layer, batch_key=batch_key, random_state=random_state, **kwargs
+        )
+    if backend != "r":
+        raise ValueError("backend must be 'python' or 'r'")
     adata = modality(data, mod)
     samples = None if batch_key is None else _labels(adata, batch_key)
     result = r._call(

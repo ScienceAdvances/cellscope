@@ -206,7 +206,7 @@ def test_legacy_qc_ratio_and_inplace_subset(rna, tmp_path):
     )
     assert "total_counts" in copied.obs
     assert "total_counts" not in rna.obs
-    fractions = cs.pl.cell_ratio(rna, "sample_id", "cell_type")
+    fractions = cs.pl.cell_ratio(rna, "sample_id", "cell_type").cellscope_table
     assert np.allclose(fractions.sum(axis=1), 1)
     expected = int(rna.obs["cell_type"].eq("T").sum())
     cs.tl.subset(rna, {"cell_type": ["T"]}, inplace=True)

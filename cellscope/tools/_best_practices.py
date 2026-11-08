@@ -6,6 +6,7 @@ import numpy as np
 
 from .._core import counts, dependency, modality, record, sync_obs
 from ..preprocessing._best_practices import _labels
+from ._harmony import harmony  # noqa: F401
 
 
 def celltypist(data, model, *, mod="gex", layer=None, key_added="celltypist", **kwargs):
@@ -26,26 +27,6 @@ def celltypist(data, model, *, mod="gex", layer=None, key_added="celltypist", **
     record(adata, key_added, {"layer": layer}, backend="celltypist")
     sync_obs(data, mod)
     return prediction
-
-
-def harmony(data, *, batch_key, mod="gex", use_rep="X_pca", key_added="X_pca_harmony", **kwargs):
-    """Correct an embedding using harmonypy; expression and count assays stay intact."""
-    hm = dependency("harmonypy", "batch")
-    adata = modality(data, mod)
-    keys = [batch_key] if isinstance(batch_key, str) else list(batch_key)
-    for key in keys:
-        _labels(adata, key)
-    embedding = np.asarray(adata.obsm[use_rep])
-    fit = hm.run_harmony(embedding, adata.obs, keys, **kwargs)
-    corrected = np.asarray(fit.Z_corr)
-    # harmonypy <2 returns dimensions-by-cells; >=2 returns cells-by-dimensions.
-    if corrected.shape != embedding.shape and corrected.T.shape == embedding.shape:
-        corrected = corrected.T
-    if corrected.shape != embedding.shape:
-        raise ValueError("Harmony returned an incompatible embedding shape")
-    adata.obsm[key_added] = corrected
-    record(adata, key_added, {"batch_key": keys, "use_rep": use_rep}, backend="harmonypy")
-    return fit
 
 
 def bbknn(data, *, batch_key, mod="gex", **kwargs):

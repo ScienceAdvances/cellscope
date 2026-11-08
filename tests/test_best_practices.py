@@ -119,7 +119,7 @@ def test_pearson_residuals_match_scanpy_and_preserve_counts(rna):
 
 
 def test_python_soupx_aligns_raw_genes_and_preserves_input(rna):
-    pytest.importorskip("pysoupx")
+    pytest.importorskip("soupx")
     rng = np.random.default_rng(3)
     raw = AnnData(
         sparse.vstack([rna.layers["counts"], sparse.csr_matrix(rng.poisson(0.3, (90, 60)))]),
@@ -135,6 +135,41 @@ def test_python_soupx_aligns_raw_genes_and_preserves_input(rna):
     assert corrected.sum() <= before.sum()
     np.testing.assert_array_equal(_matrix(rna.X), before)
     np.testing.assert_allclose(rna.obs.soupx_contamination, 0.1)
+
+
+def test_soupx_merged_batches_restore_interleaved_cells_and_backup(rna, tmp_path, monkeypatch):
+    pytest.importorskip("soupx")
+    rna.var["gene_ids"] = [f"id{i}" for i in range(rna.n_vars)]
+    rna.obs["sample_id"] = np.tile(["B", "A"], rna.n_obs // 2)
+    rna.obs["barcode"] = rna.obs_names
+    before = rna.X.copy()
+    raw_files = {name: tmp_path / f"{name}.h5" for name in ("A", "B")}
+    for path in raw_files.values():
+        path.touch()
+    rng = np.random.default_rng(1)
+    raw = {
+        path: AnnData(
+            sparse.vstack([rna.X, sparse.csr_matrix(rng.poisson(0.3, (80, rna.n_vars)))]),
+            obs=pd.DataFrame(
+                {"barcode": [*rna.obs_names, *[f"empty{i}" for i in range(80)]]},
+                index=[*rna.obs_names, *[f"empty{i}" for i in range(80)]],
+            ),
+            var=rna.var.copy(),
+        )[:, ::-1].copy()
+        for path in raw_files.values()
+    }
+    monkeypatch.setattr(cs.io, "read_10x", lambda path, **kwargs: raw[path].copy())
+    assert cs.pp.soupx(
+        rna, batch_key="sample_id", raw_files=raw_files, cluster_key="cell_type",
+        contamination={"A": 0.08, "B": 0.15},
+    ) is rna
+    np.testing.assert_array_equal(_matrix(rna.layers["raw_counts"]), _matrix(before))
+    np.testing.assert_array_equal(_matrix(rna.layers["counts"]), _matrix(rna.X))
+    np.testing.assert_allclose(rna.obs.soupx_contamination, np.tile([0.15, 0.08], rna.n_obs // 2))
+    assert rna.obs_names.tolist() == rna.obs["barcode"].tolist()
+    assert "_soupx_cluster" not in rna.obs and "X_pca" not in rna.obsm
+    assert rna.uns["ambient_correction"]["backend"] == "soupx-python"
+    assert rna.X.sum() < before.sum()
 
 
 def test_soupx_rejects_missing_raw_identifiers(rna):
@@ -295,19 +330,11 @@ def test_r_slingshot_and_tradeseq_alignment():
     assert table.pvalue.dropna().between(0, 1).all()
 
 
-def test_r_sctransform_and_soupx_keep_raw_assays(rna):
-    _require_r(["sctransform", "SoupX"])
+def test_r_sctransform_keeps_raw_assays(rna):
+    _require_r(["sctransform"])
     before = _matrix(rna.layers["counts"]).copy()
     cs.pp.sctransform(rna, backend="r", n_genes=40, verbosity=0)
     assert np.isfinite(rna.layers["sct_residuals"][:, rna.var.sct_modeled]).all()
-    rng = np.random.default_rng(8)
-    raw = AnnData(
-        sparse.vstack([rna.layers["counts"], sparse.csr_matrix(rng.poisson(0.3, (80, 60)))]),
-        obs=pd.DataFrame(index=[*rna.obs_names, *[f"empty{i}" for i in range(80)]]),
-        var=rna.var.copy(),
-    )
-    cs.pp.soupx(rna, raw, cluster_key="cell_type", contamination=0.1, backend="r")
-    assert _matrix(rna.layers["soupx_counts"]).sum() <= before.sum()
     np.testing.assert_array_equal(_matrix(rna.layers["counts"]), before)
 
 

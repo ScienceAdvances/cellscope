@@ -193,7 +193,6 @@ def backend_status(
         "slingshot",
         "tradeSeq",
         "nichenetr",
-        "SoupX",
         "sctransform",
         "glmpca",
         "Seurat",

@@ -62,15 +62,14 @@ def test_r_named_vectors_keep_values_order_and_duplicate_names():
     assert strings.index.tolist() == ["second", "first"]
 
 
-def test_soupx_r_allows_rounding_override_without_changing_counts():
-    _require_r(["SoupX"])
+def test_soupx_allows_rounding_override_without_changing_counts():
+    pytest.importorskip("soupx")
     data = cs.datasets.toy_rna(n_cells=100, n_genes=60)
     before = data.layers["counts"].toarray().copy()
     cs.pp.soupx(
         data,
         data.copy(),
         cluster_key="cell_type",
-        backend="r",
         contamination=0.1,
         adjust_kwargs={"roundToInt": False},
     )
@@ -87,7 +86,6 @@ def test_soupx_rejects_input_channel_override():
             data,
             data.copy(),
             cluster_key="cell_type",
-            backend="r",
             contamination=0.1,
             adjust_kwargs={"sc": "other"},
         )

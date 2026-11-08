@@ -34,6 +34,7 @@ from ._best_practices import (
     velocity,
 )
 from ._differential import de_methods, find_all_markers, find_markers, pseudobulk_de
+from ._phenotrack import PhenoTrackResult, phenotrack, phenotrack_aggregate
 from ._r_methods import (
     glmpca,
     nichenet,
@@ -44,6 +45,7 @@ from .compositional_analysis import cell_composition, composition_test
 from .utils import read_json, subset
 
 __all__ = [
+    "PhenoTrackResult",
     "activity",
     "add_label",
     "annotate",
@@ -70,6 +72,8 @@ __all__ = [
     "palantir",
     "pca",
     "perturbation_distance",
+    "phenotrack",
+    "phenotrack_aggregate",
     "pseudobulk",
     "pseudobulk_de",
     "read_json",
@@ -93,11 +97,17 @@ __all__ = [
 
 def __getattr__(name):
     if name == "add_label":
+        from .._logging import instrument_function
         from .cell_type_annotation import add_label
 
-        return add_label
+        return instrument_function(add_label, "tl.add_label")
     if name in {"get_rank_array", "deseq"}:
+        from .._logging import instrument_function
         from . import gene_level_analysis
 
-        return getattr(gene_level_analysis, name)
+        return instrument_function(getattr(gene_level_analysis, name), f"tl.{name}")
     raise AttributeError(name)
+
+from ._genevector import genevector_embedding, genevector_fit, genevector_phenotypes
+
+__all__ += ["genevector_embedding", "genevector_fit", "genevector_phenotypes"]

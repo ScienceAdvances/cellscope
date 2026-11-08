@@ -17,7 +17,11 @@ adapters invoke the original R package through an isolated `Rscript` process.
 No R process, download, package installation or model training happens on
 import. A failed R call raises a Python error instead of terminating Python.
 
-- SoupX: `pysoupx` by default; optional R `SoupX`.
+- SoupX: NiRuff's `soupx-python` package (imported as `soupx`).
+  For a merged AnnData, call `cs.pp.soupx(adata, batch_key="sample_id", raw_files=raw_files)`
+  with a mapping from capture-library labels to unfiltered 10x inputs. Temporary
+  clustering runs per library and only the corrected counts and contamination
+  estimates are transferred back.
 - SCTransform: Python `sctransform.vst`; optional R `sctransform::vst`.
 - GLM-PCA: the original author's Python `glmpca`; optional R `glmpca`.
 - Slingshot: `pyslingshot`; optional R `slingshot`.
@@ -102,7 +106,7 @@ common R packages only when explicitly run:
 
 ```bash
 Rscript scripts/install_r_backends.R
-# Optional SoupX/SCT/GLM-PCA and GitHub NicheNet packages:
+# Optional SCT/GLM-PCA and GitHub NicheNet packages:
 Rscript scripts/install_r_backends.R --extended
 ```
 
@@ -160,10 +164,10 @@ MuData is a shared container; the RNA adapters operate only on the selected RNA 
 - Nullable boolean metadata retains logical values and missingness across
   the SCE bridge. Named R vectors decode as pandas Series with their names and
   value order; unnamed vectors remain arrays.
-- Ambient correction writes `soupx_counts`; scran writes
-  `scran_normalization`; SCT and Pearson write residual layers. These functions
-  leave `X` and the original count layer intact. `pp.normalize` explicitly
-  changes `X`, while preserving the original counts.
+- Single-library SoupX writes `soupx_counts`. Merged SoupX with `batch_key` and
+  `raw_files` backs up input counts in `raw_counts` and updates `X` and `counts`
+  after all libraries finish. Scran writes `scran_normalization`; SCT and Pearson
+  write residual layers. `pp.normalize` changes `X` and preserves counts.
 - SCT excluded genes have NaN residuals and `var["sct_modeled"] == False`.
   Subset to modeled genes before PCA. Residuals are unsuitable input for
   integer-count differential-expression models.
@@ -176,11 +180,11 @@ MuData is a shared container; the RNA adapters operate only on the selected RNA 
 - Methods that train models return native fitted models for diagnostics.
   Velocity returns a processed copy. R S4 fits are returned as `r.RObject` containing
   RDS bytes; they are not Python model objects or H5AD-compatible `uns` values.
-- Optional native `**kwargs` remain backend-specific: Python SoupX uses
-  `round_to_int`, R SoupX uses `roundToInt`; Python SCT uses `vst_flavor`,
-  R SCT uses `vst.flavor`. Pass the latter with `**{"vst.flavor": "v2"}`.
-  SoupX option dictionaries override defaults such as `roundToInt` and
-  `doPlot`; the input channel `sc` is reserved.
+- SoupX uses `adjust_kwargs={"roundToInt": False}` to return fractional counts.
+  The former `round_to_int` option is accepted as an alias. The input channel
+  `sc` is reserved. Use `estimate_kwargs={"verbose": True}` for fit details.
+- Python SCT uses `vst_flavor`. R SCT uses `vst.flavor`, passed as
+  `**{"vst.flavor": "v2"}`.
 
 For SCENIC, infer edges with `tl.grn`, then pass local cisTarget databases
 and motif annotations to `tl.scenic_regulons`. It returns a motif-enrichment
@@ -194,7 +198,7 @@ import cellscope as cs
 
 adata = cs.io.read_h5ad("filtered.h5ad")
 raw = cs.io.read_h5ad("unfiltered.h5ad")  # same capture; includes empty droplets
-# Existing cell_type or provisional clusters are needed for SoupX/scran.
+# The single-library API uses an existing clustering. The merged API clusters internally.
 cs.pp.soupx(adata, raw, cluster_key="provisional_cluster")
 cs.pp.scran(adata, cluster_key="provisional_cluster", layer="soupx_counts")
 cs.pp.deviance_features(adata, layer="soupx_counts", n_top_genes=4000)
@@ -245,7 +249,7 @@ adapter does not infer them from unrelated marker tables.
 Tests run real installed backends with synthetic data and check named
 alignment, sparse orientation, unchanged count assays, backend errors and
 native result structure. They include Python SoupX/SCT/Slingshot/GLM-PCA,
-R scran/scry/SoupX/SCT/Slingshot/tradeSeq/GLM-PCA, Harmony, NicheNet, LIANA
+R scran/scry/SCT/Slingshot/tradeSeq/GLM-PCA, Harmony, NicheNet, LIANA
 communication, Pertpy Milo/scCODA, and pySCENIC AUCell. Optional tests skip
 explicitly when a backend is absent. Scope checks ensure archived interfaces,
 modules and dependency extras are absent from the active packages.
@@ -256,7 +260,7 @@ scDblFinder and R NicheNet have not been executed end to end in the development
 environment. Their adapters require validation on the intended cohort. GPU
 training is not tested here.
 
-Primary method references: [Python SoupX](https://github.com/omicverse/py-soupx),
+Primary method references: [Python SoupX](https://github.com/NiRuff/soupx-python),
 [Python SCT](https://pypi.org/project/sctransform/),
 [scranpy API](https://libscran.github.io/scranpy/api/scranpy.html),
 [PySlingshot](https://github.com/mossjacob/pyslingshot/),
